@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Three.js Parametric Cup (Solid Walls + Noise) Template</title>
+  <style>
+    html,body { height:100%; margin:0; background:#0b0b0c; color:#eee; font-family:system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;}
+    #app { width:100%; height:100vh; overflow:hidden; position:relative; }
+    #ui { position: absolute; left: 12px; top: 12px; z-index: 20; display:flex; gap:8px; align-items:center; }
+    button { padding:8px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.06); background:rgba(255,255,255,0.03); color:inherit; cursor:pointer;}
+    button:hover{ background: rgba(255,255,255,0.06);}
+    #info { position: absolute; right: 12px; top: 12px; color: #bbb; font-size:13px; z-index:20; }
+    canvas { display:block }
+    .selected-outline { outline: 2px dashed #f0c; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three/build/three.module.js",
+      "simplex-noise": "https://cdn.jsdelivr.net/npm/simplex-noise@4.0.3/+esm",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three/examples/jsm/"
+    }
+  }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+</head>
+<body>
+<div id="app">
+  <div id="ui">
+    <button id="btnReset">Reset View</button>
+    <button id="btnLoad">Save STL</button>
+    <button id="btnToggleHelpers">Toggle Helpers</button>
+    <button id="btnToggleWire">Wireframe</button>
+  </div>
+  <div id="info">Click objects to select • Drag to orbit • Scroll to zoom</div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import GUI from 'https://unpkg.com/lil-gui@0.18.0/dist/lil-gui.esm.js';
+import * as SimplexNoise from 'simplex-noise';
+//import { CSG } from 'https://cdn.jsdelivr.net/npm/three-csg-ts@2.0.3/dist/three-csg.js'; // CSG lib
+import { CSG } from 'https://cdn.jsdelivr.net/npm/three-csg-ts@3.2.0/+esm'
+import { STLExporter } from 'three/addons/exporters/STLExporter.js';
+
+
+
+
+// --- Basic scene setup ---
+const container = document.getElementById('app');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0a0a);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 2000);
+camera.position.set(6, 4, 8);
+
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+container.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+
+// Lights
+scene.add(new THREE.HemisphereLight(0xbfd1e5, 0x444444, 0.6));
+const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+dir.position.set(5,10,2);
+dir.castShadow = true;
+dir.shadow.mapSize.set(2048,2048);
+scene.add(dir);
+
+// Ground
+const groundMat = new THREE.MeshStandardMaterial({ color:0x111217, metalness:0.05, roughness:0.95 });
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(200,200), groundMat);
+ground.rotation.x = -Math.PI/2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Helpers
+const grid = new THREE.GridHelper(20,40,0x222222,0x111111);
+grid.position.y = 0.001;
+scene.add(grid);
+const axes = new THREE.AxesHelper(3);
+scene.add(axes);
+let helpersVisible = true;
+
+// Demo group
+const demoGroup = new THREE.Group();
+scene.add(demoGroup);
+
+const cupMaterial = new THREE.MeshStandardMaterial({ color:0x2a9d8f, metalness:0.05, roughness:0.4 });
+
+const simplex = SimplexNoise.createNoise2D();
+
+// Cup parameters
+const cupParams = {
+  width:2.0,
+  depth:1.6,
+  height:1.2,
+  wallThickness:0.12,
+  baseThickness:0.12,
+  segments:20,          // subdivisions for smooth noise
+  noiseAmplitude:0.05,
+  noiseAmplitudeY: 2,
+  cos: 1,
+  amplitutdeSin: 0.5, 
+  sin: 1,
+  wireframe:false
+};
+
+let cupMesh = null;
+
+// Apply radial noise to geometry (vertices move outward from center)
+function distortVertices(geometry, amplitude = 0.05, amplituteY = 2, height = 1, cos = 1, amplitutdeSin = 0.5, sin = 0) {
+  const pos = geometry.attributes.position;
+  const count = pos.count;
+
+  for (let i = 0; i < count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+
+    // Vector from center to vertex
+    const dirX = x;
+    const dirY = 0;      // only horizontal displacement
+    const dirZ = z;
+
+    const length = Math.sqrt(dirX*dirX + dirZ*dirZ);
+    if (length === 0) continue;
+
+    const nx = x * amplituteY;
+    const ny = y * amplituteY;
+    const nz = z * amplituteY;
+
+    // Noise scalar
+    const noise = simplex(nx, ny) * amplitude;
+    const noise2 = simplex(nz, ny) * amplitude;
+
+    const noise3 = Math.cos(1 / height * z) * cos
+    const noise4 = Math.sin(1 / (height * amplitutdeSin) * y) * sin
+
+
+    // Normalize horizontal direction and scale by noise
+    const dx = ((dirX / length) * (noise2 + noise3));
+    const dz = ((dirZ / length) * (noise + noise3));
+
+    pos.setX(i, x + dx + noise4);
+    pos.setZ(i, z + dz + noise4) ;
+  }
+
+  pos.needsUpdate = true;
+}
+
+// Build hollow cup using CSG
+function buildCup(params){
+  if(cupMesh){
+    demoGroup.remove(cupMesh);
+    cupMesh.geometry.dispose();
+    cupMesh.material.dispose();
+    cupMesh = null;
+  }
+
+  const { width, depth, height, wallThickness, baseThickness, segments, noiseAmplitude, noiseAmplitudeY,cos, amplitutdeSin, sin } = params;
+
+  // Outer box
+  const outerGeo = new THREE.BoxGeometry(width, height, depth, segments, segments, segments);
+  // Inner box (hollow)
+  const innerGeo = new THREE.BoxGeometry(
+    width - 2*wallThickness,
+    height - baseThickness,
+    depth - 2*wallThickness,
+    segments, segments, segments
+  );
+  outerGeo.translate(0, height / 2, 0); // move inner box up to leave base
+  innerGeo.translate(0, height / 2 + baseThickness/2, 0); // move inner box up to leave base
+
+  // CSG subtraction
+  const outerMesh = new THREE.Mesh(outerGeo);
+  const innerMesh = new THREE.Mesh(innerGeo);
+  const csgOuter = CSG.fromMesh(outerMesh);
+  const csgInner = CSG.fromMesh(innerMesh);
+  const hollowCSG = csgOuter.subtract(csgInner);
+  const hollowMesh = CSG.toMesh(hollowCSG, new THREE.Matrix4());
+  hollowMesh.material = cupMaterial.clone();
+  hollowMesh.castShadow = true;
+  hollowMesh.receiveShadow = true;
+
+  // Apply noise
+  distortVertices(hollowMesh.geometry, noiseAmplitude, noiseAmplitudeY, height, cos, amplitutdeSin, sin);
+
+  // Wireframe
+  hollowMesh.material.wireframe = params.wireframe;
+
+  cupMesh = hollowMesh;
+
+  demoGroup.add(cupMesh);
+}
+
+// Initial build
+buildCup(cupParams);
+
+// GUI
+const gui = new GUI({ width:320 });
+gui.add(cupParams,'width',0.4,10,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'depth',0.4,10,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'height',0.2,15,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'wallThickness',0.02,0.6,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'baseThickness',0.02,0.6,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'segments',4,40,1).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'noiseAmplitude',0,0.3,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'noiseAmplitudeY',0,5,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'cos',0,5,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'amplitutdeSin',0,1,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'sin',0,5,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'wireframe').onChange(v=>{ cupMesh.material.wireframe=v; });
+
+// Resize & animate
+window.addEventListener('resize',()=>{ 
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth,window.innerHeight);
+});
+
+
+  // ----- Buttons -----
+  document.getElementById('btnReset').addEventListener('click', () => {
+    controls.reset();
+    camera.position.set(6,4,8);
+  });
+
+  document.getElementById('btnToggleHelpers').addEventListener('click', () => {
+    helpersVisible = !helpersVisible;
+    grid.visible = helpersVisible;
+    axes.visible = helpersVisible;
+  });
+
+  document.getElementById('btnToggleWire').addEventListener('click', () => {
+    cupMesh.material.wireframe=!cupMesh.material.wireframe
+    gui.controllers.forEach(c => { if (c.property === 'wireframe') c.setValue(cupMesh.material.wireframe); });
+  });
+
+  document.getElementById('btnLoad').addEventListener('click', async () => {
+    const exporter = new STLExporter();
+    const data = exporter.parse( cupMesh );
+    var blob = new Blob([data], {type: 'text/plain'});
+    saveAs(blob, 'export.stl');
+    console.log(data)
+  });
+  
+function animate(){ requestAnimationFrame(animate); controls.update(); renderer.render(scene,camera); }
+animate();
+</script>
+</body>
+</html>
