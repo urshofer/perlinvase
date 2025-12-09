@@ -205,13 +205,13 @@ function buildCup(params){
 buildCup(cupParams);
 
 // GUI
-const gui = new GUI({ width:320 });
+const gui = new GUI({ width:480 });
 gui.add(cupParams,'width',0.4,10,0.01).onChange(()=>buildCup(cupParams));
 gui.add(cupParams,'depth',0.4,10,0.01).onChange(()=>buildCup(cupParams));
 gui.add(cupParams,'height',0.2,15,0.01).onChange(()=>buildCup(cupParams));
 gui.add(cupParams,'wallThickness',0.02,0.6,0.01).onChange(()=>buildCup(cupParams));
 gui.add(cupParams,'baseThickness',0.02,0.6,0.01).onChange(()=>buildCup(cupParams));
-gui.add(cupParams,'segments',4,40,1).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'segments',1,200,1).onChange(()=>buildCup(cupParams));
 gui.add(cupParams,'noiseAmplitude',0,0.3,0.01).onChange(()=>buildCup(cupParams));
 gui.add(cupParams,'noiseAmplitudeY',0,5,0.01).onChange(()=>buildCup(cupParams));
 gui.add(cupParams,'cos',0,5,0.01).onChange(()=>buildCup(cupParams));
