@@ -53,7 +53,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0a0a);
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 2000);
-camera.position.set(6, 4, 8);
+camera.position.set(0, 15, 10);
 
 const renderer = new THREE.WebGLRenderer({ antialias:true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -93,30 +93,33 @@ let helpersVisible = true;
 const demoGroup = new THREE.Group();
 scene.add(demoGroup);
 
-const cupMaterial = new THREE.MeshStandardMaterial({ color:0x2a9d8f, metalness:0.05, roughness:0.4 });
+const cupMaterial = new THREE.MeshStandardMaterial({ color:0xFFFFFF, metalness:.1, roughness:0.1 });
 
 const simplex = SimplexNoise.createNoise2D();
 
 // Cup parameters
 const cupParams = {
-  width:2.0,
-  depth:1.6,
-  height:1.2,
-  wallThickness:0.12,
-  baseThickness:0.12,
+  width:1.0,
+  depth:1.0,
+  height:5,
+  wallThickness:0.1,
+  baseThickness:1,
   segments:20,          // subdivisions for smooth noise
-  noiseAmplitude:0.05,
+  noiseAmplitude:0.0,
   noiseAmplitudeY: 2,
-  cos: 1,
-  amplitutdeSin: 0.5, 
-  sin: 1,
+  cos: 0,
+  amplitutdeCos: 0.0,
+  bauchX: .5,
+  bauch: 1, 
+  amplitutdeSin: 0.33, 
+  sin: 0,
   wireframe:false
 };
 
 let cupMesh = null;
 
 // Apply radial noise to geometry (vertices move outward from center)
-function distortVertices(geometry, amplitude = 0.05, amplituteY = 2, height = 1, cos = 1, amplitutdeSin = 0.5, sin = 0) {
+function distortVertices(geometry, amplitude = 0.05, amplituteY = 2, height = 1, cos = 1, amplitutdeSin = 0.5, sin = 0, amplitutdeCos = 1, bauchX = 0, bauch = 0) {
   const pos = geometry.attributes.position;
   const count = pos.count;
 
@@ -141,16 +144,23 @@ function distortVertices(geometry, amplitude = 0.05, amplituteY = 2, height = 1,
     const noise = simplex(nx, ny) * amplitude;
     const noise2 = simplex(nz, ny) * amplitude;
 
-    const noise3 = Math.cos(1 / height * z) * cos
-    const noise4 = Math.sin(1 / (height * amplitutdeSin) * y) * sin
+    // Cos (Rounding)
+    const noise3 = (Math.cos(1 / height * z) * cos) / 1 * (1 + (amplitutdeCos * y));
+
+    // Sin (Bending)
+    const noise4 = Math.sin(Math.PI / (height * amplitutdeSin) * y) * sin
+
+    // Bauch
+    const b = 1 + ((Math.sin(Math.PI / height * (y + ((bauchX - 0.5) * (3 * Math.PI)))) - Math.PI * .5) * (bauch - 1))
+
 
 
     // Normalize horizontal direction and scale by noise
-    const dx = ((dirX / length) * (noise2 + noise3));
-    const dz = ((dirZ / length) * (noise + noise3));
+    const dx = ((dirX / length) * (noise2 + noise3)) + noise4;
+    const dz = ((dirZ / length) * (noise + noise3)) + noise4;
 
-    pos.setX(i, x + dx + noise4);
-    pos.setZ(i, z + dz + noise4) ;
+    pos.setX(i, (x + dx) * (b < .2 ? .2 : b));
+    pos.setZ(i, (z + dz) * (b < .2 ? .2 : b)) ;
   }
 
   pos.needsUpdate = true;
@@ -165,7 +175,7 @@ function buildCup(params){
     cupMesh = null;
   }
 
-  const { width, depth, height, wallThickness, baseThickness, segments, noiseAmplitude, noiseAmplitudeY,cos, amplitutdeSin, sin } = params;
+  const { width, depth, height, wallThickness, baseThickness, segments, noiseAmplitude, noiseAmplitudeY,cos, amplitutdeSin, sin, amplitutdeCos, bauchX, bauch } = params;
 
   // Outer box
   const outerGeo = new THREE.BoxGeometry(width, height, depth, segments, segments, segments);
@@ -191,7 +201,7 @@ function buildCup(params){
   hollowMesh.receiveShadow = true;
 
   // Apply noise
-  distortVertices(hollowMesh.geometry, noiseAmplitude, noiseAmplitudeY, height, cos, amplitutdeSin, sin);
+  distortVertices(hollowMesh.geometry, noiseAmplitude, noiseAmplitudeY, height, cos, amplitutdeSin, sin, amplitutdeCos, bauchX, bauch);
 
   // Wireframe
   hollowMesh.material.wireframe = params.wireframe;
@@ -209,13 +219,16 @@ const gui = new GUI({ width:480 });
 gui.add(cupParams,'width',0.4,10,0.01).onChange(()=>buildCup(cupParams));
 gui.add(cupParams,'depth',0.4,10,0.01).onChange(()=>buildCup(cupParams));
 gui.add(cupParams,'height',0.2,15,0.01).onChange(()=>buildCup(cupParams));
-gui.add(cupParams,'wallThickness',0.02,0.6,0.01).onChange(()=>buildCup(cupParams));
-gui.add(cupParams,'baseThickness',0.02,0.6,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'wallThickness',0.01,2,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'baseThickness',0.01,2,0.01).onChange(()=>buildCup(cupParams));
 gui.add(cupParams,'segments',1,200,1).onChange(()=>buildCup(cupParams));
 gui.add(cupParams,'noiseAmplitude',0,0.3,0.01).onChange(()=>buildCup(cupParams));
 gui.add(cupParams,'noiseAmplitudeY',0,5,0.01).onChange(()=>buildCup(cupParams));
-gui.add(cupParams,'cos',0,5,0.01).onChange(()=>buildCup(cupParams));
-gui.add(cupParams,'amplitutdeSin',0,1,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'cos',0,10,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'amplitutdeCos',0.0,1,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'bauchX',0.0,1,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'bauch',0.0,2,0.01).onChange(()=>buildCup(cupParams));
+gui.add(cupParams,'amplitutdeSin',0.01,1,0.01).onChange(()=>buildCup(cupParams));
 gui.add(cupParams,'sin',0,5,0.01).onChange(()=>buildCup(cupParams));
 gui.add(cupParams,'wireframe').onChange(v=>{ cupMesh.material.wireframe=v; });
 
